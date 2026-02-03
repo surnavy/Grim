@@ -76,6 +76,7 @@ BEGIN_MESSAGE_MAP(CMFCApplication1Dlg, CDialogEx)
 	ON_BN_CLICKED(IDC_BUTTON_RESET, &CMFCApplication1Dlg::OnBnClickedButtonReset)
 	ON_EN_CHANGE(IDC_EDIT_POINT_RADIUS, &CMFCApplication1Dlg::OnEnChangeEditSettings)
 	ON_EN_CHANGE(IDC_EDIT_LINE_THICKNESS, &CMFCApplication1Dlg::OnEnChangeEditSettings)
+	ON_WM_DESTROY()
 END_MESSAGE_MAP()
 
 
@@ -223,7 +224,6 @@ void CMFCApplication1Dlg::DrawCircle(CDC* pDC, CPoint center, double radius, int
 		}
 	}
 	else {
-		// [테두리 모드] - thickness만큼 겹쳐 그려서 두께 표현
 		// 반지름을 (r - 두께/2)부터 (r + 두께/2)까지 반복
 		int startR = r - (nSafeThickness / 2);
 		int endR = startR + nSafeThickness;
@@ -254,7 +254,7 @@ bool CMFCApplication1Dlg::CalculateCircumcircle(CPoint p1, CPoint p2, CPoint p3)
 	 double D = 2 * (p1.x * (p2.y - p3.y) + p2.x * (p3.y - p1.y) + p3.x * (p1.y - p2.y));
 	 if (abs(D) < 1e-6) {
 		 CString strCenter;
-		 strCenter.Format(_T("원이 아닙니다."), m_circleCenter.x, m_circleCenter.y);
+		 strCenter.Format(_T("세 점이 직선상에 놓여있습니다."));
 		 SetDlgItemText(IDC_STATIC_CENTER, strCenter);
 		 return false;
 	 }
@@ -381,7 +381,7 @@ void CMFCApplication1Dlg::OnBnClickedButtonRandomMove()
 	}
 
 	// 워커 스레드 생성
-	AfxBeginThread(RandomMoveThread, this);
+	m_pThread = AfxBeginThread(RandomMoveThread, this);
 }
 
 UINT CMFCApplication1Dlg::RandomMoveThread(LPVOID pParam)
@@ -389,6 +389,8 @@ UINT CMFCApplication1Dlg::RandomMoveThread(LPVOID pParam)
 	CMFCApplication1Dlg* pDlg = (CMFCApplication1Dlg*)pParam;
 
 	CWnd* pCanvas = pDlg->GetDlgItem(IDC_STATIC_CANVAS);
+	if (!pCanvas) return 0; // 안전장치
+
 	CRect rect;
 	pCanvas->GetWindowRect(&rect);
 	pDlg->ScreenToClient(&rect);
@@ -397,35 +399,49 @@ UINT CMFCApplication1Dlg::RandomMoveThread(LPVOID pParam)
 
 	for (int i = 0; i < 10; ++i)
 	{
+		// [추가] 사용자가 창을 닫으면 루프를 즉시 탈출
+		if (pDlg->m_bStopThread) break;
+
 		for (int j = 0; j < 3; ++j)
 		{
-			// 1. 랜덤 좌표 생성
 			pDlg->m_points[j].x = rect.left + (rand() % rect.Width());
 			pDlg->m_points[j].y = rect.top + (rand() % rect.Height());
 
-			// 2. [추가] UI 텍스트도 랜덤 좌표에 맞춰 실시간 업데이트
 			CString str;
 			str.Format(_T("P%d: (%d, %d)"), j + 1, pDlg->m_points[j].x, pDlg->m_points[j].y);
 			pDlg->SetDlgItemText(nStaticIDs[j], str);
 		}
 
-		// 3. 원 계산 및 화면 갱신
 		pDlg->CalculateCircumcircle(pDlg->m_points[0], pDlg->m_points[1], pDlg->m_points[2]);
 		pDlg->Invalidate(FALSE);
 
-		Sleep(500); // 초당 2회
+		Sleep(500);
 	}
+
+	// [추가] 스레드가 완전히 끝났음을 알림
+	pDlg->m_pThread = nullptr;
 	return 0;
 }
 
 void CMFCApplication1Dlg::OnBnClickedButtonReset()
 {
-	// TODO: 여기에 컨트롤 알림 처리기 코드를 추가합니다.
-	// 데이터 초기화
+	// 1. 실행 중인 스레드가 있다면 먼저 안전하게 종료
+	if (m_pThread != nullptr) {
+		m_bStopThread = true; // 중단 신호 보냄
+
+		// 스레드가 종료될 때까지 대기
+		WaitForSingleObject(m_pThread->m_hThread, 500);
+
+		// 확실히 하기 위해 메인 스레드에서도 nullptr 처리
+		m_pThread = nullptr;
+	}
+
+	// 2. 데이터 및 플래그 초기화
 	m_points.clear();
-	m_nClickCount = 0;
 	m_bCircleReady = false;
 	m_bIsDragging = false;
+	m_bStopThread = false;
+	m_nClickCount = 0;
 
 	// UI 텍스트 초기화
 	SetDlgItemText(IDC_STATIC_P1, _T("P1:"));
@@ -457,7 +473,7 @@ BOOL CMFCApplication1Dlg::OnSetCursor(CWnd* pWnd, UINT nHitTest, UINT message)
 
 void CMFCApplication1Dlg::OnEnChangeEditSettings()
 {
-	if (m_bIsUpdating) return; // 슬라이더나 초기화 로직에 의해 바뀐 거라면 무시!
+	if (m_bIsUpdating) return;
 
 	if (!m_sliderRadius.GetSafeHwnd() || !m_sliderThickness.GetSafeHwnd()) return;
 
@@ -490,4 +506,14 @@ void CMFCApplication1Dlg::OnHScroll(UINT nSBCode, UINT nPos, CScrollBar* pScroll
 		Invalidate(FALSE);
 	}
 	CDialogEx::OnHScroll(nSBCode, nPos, pScrollBar);
+}
+void CMFCApplication1Dlg::OnDestroy()
+{
+	if (m_pThread != nullptr) {
+		m_bStopThread = true;
+
+		WaitForSingleObject(m_pThread->m_hThread, 1000);
+	}
+
+	CDialogEx::OnDestroy();
 }

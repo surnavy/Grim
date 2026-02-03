@@ -17,6 +17,7 @@ protected:
 	HICON m_hIcon;
 
 	virtual BOOL OnInitDialog();
+	afx_msg void OnDestroy();
 	afx_msg void OnSysCommand(UINT nID, LPARAM lParam);
 	afx_msg void OnPaint();
 	afx_msg HCURSOR OnQueryDragIcon();
@@ -35,10 +36,10 @@ private:
 	// --- 데이터 관련 ---
 	std::vector<CPoint> m_points;
 
-	CPoint m_circleCenter;
-	double m_circleRadius;
+	CPoint m_circleCenter = { 0, 0 };
+	double m_circleRadius = 0.0;
 	bool   m_bCircleReady = false; // 초기화 습관
-	int m_nClickCount;
+	int m_nClickCount = 0;
 
 	// --- 설정 관련 ---
 	int m_nPointRadius = 5;
@@ -56,6 +57,9 @@ private:
 	// --- 헬퍼 함수 ---
 	void DrawCircle(CDC* pDC, CPoint center, double radius, int thickness, bool fill);
 	bool CalculateCircumcircle(CPoint p1, CPoint p2, CPoint p3);
+
+	CWinThread* m_pThread = nullptr; // 스레드 포인터 저장
+	bool m_bStopThread = false;      // 스레드 중단 플래그
 
 	// --- UI 컨트롤 ---
 	CSliderCtrl m_sliderRadius;
